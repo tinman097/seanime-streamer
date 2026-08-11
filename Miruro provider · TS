@@ -1,0 +1,168 @@
+/// <reference path="./online-streaming-provider.d.ts" />
+
+// Seanime Online Streaming Provider for walterwhite-69/Miruro-API
+// https://github.com/walterwhite-69/Miruro-API
+//
+// This extension does NOT scrape anything itself - it just calls your
+// self-hosted Miruro-API instance (running on your Pi) and translates its
+// responses into the shape Seanime expects.
+//
+// {{apiUrl}} is replaced at load time with whatever the user enters in the
+// extension's config screen in Seanime (see manifest.json userConfig).
+
+type MiruroEpisode = {
+    id: string          // e.g. "watch/kiwi/178005/sub/animepahe-1"
+    number: number
+    title?: string
+}
+
+type MiruroEpisodesResponse = {
+    providers: {
+        [provider: string]: {
+            episodes: {
+                sub?: MiruroEpisode[]
+                dub?: MiruroEpisode[]
+            }
+        }
+    }
+}
+
+type MiruroStream = {
+    url: string
+    type: string        // "hls" | ...
+    quality: string
+}
+
+type MiruroSubtitle = {
+    file: string
+    label: string
+    kind: string
+}
+
+type MiruroSourceResponse = {
+    streams: MiruroStream[]
+    subtitles?: MiruroSubtitle[]
+}
+
+class Provider {
+
+    private api = "{{apiUrl}}"
+
+    getSettings(): Settings {
+        return {
+            // Miruro-API's known providers. If a given anime isn't available
+            // on one, findEpisodeServer() below will throw and Seanime will
+            // let the user try another.
+            episodeServers: ["kiwi", "arc", "zoro", "jet"],
+            supportsDub: true,
+        }
+    }
+
+    // Seanime already knows the AniList ID for the anime being searched, and
+    // Miruro-API is AniList-native, so we skip fuzzy title matching entirely
+    // and just pass the ID straight through, encoding the requested audio
+    // track (sub/dub) since findEpisodes() only receives this id back.
+    async search(opts: SearchOptions): Promise<SearchResult[]> {
+        const audio = opts.dub ? "dub" : "sub"
+        return [{
+            id: `${opts.media.id}::${audio}`,
+            title: opts.media.englishTitle || opts.media.romajiTitle || opts.query,
+            url: `${this.api}/info/${opts.media.id}`,
+            subOrDub: opts.dub ? "dub" : "sub",
+        }]
+    }
+
+    async findEpisodes(id: string): Promise<EpisodeDetails[]> {
+        const [anilistId, audio] = id.split("::") as [string, "sub" | "dub"]
+
+        const res = await fetch(`${this.api}/episodes/${anilistId}`)
+        if (!res.ok) {
+            throw new Error(`Failed to fetch episode list (${res.status})`)
+        }
+        const data = (await res.json()) as MiruroEpisodesResponse
+
+        const providerNames = Object.keys(data.providers || {})
+        if (providerNames.length === 0) {
+            throw new Error("No providers returned episodes for this anime.")
+        }
+
+        // Default to whichever provider has the most episodes for the
+        // requested audio track - just used for numbering/titles here.
+        let bestProvider = providerNames[0]
+        let bestCount = 0
+        for (const p of providerNames) {
+            const count = data.providers[p]?.episodes?.[audio]?.length ?? 0
+            if (count > bestCount) {
+                bestCount = count
+                bestProvider = p
+            }
+        }
+
+        const list = data.providers[bestProvider]?.episodes?.[audio] ?? []
+        if (list.length === 0) {
+            throw new Error(`No ${audio} episodes found on any provider.`)
+        }
+
+        const episodes: EpisodeDetails[] = list.map((ep) => ({
+            id: `${anilistId}::${ep.number}::${audio}`,
+            number: ep.number,
+            url: "",
+            title: ep.title,
+        }))
+
+        episodes.sort((a, b) => a.number - b.number)
+        return episodes
+    }
+
+    async findEpisodeServer(episode: EpisodeDetails, _server: string): Promise<EpisodeServer> {
+        const [anilistId, numberStr, audio] = episode.id.split("::") as [string, string, "sub" | "dub"]
+        const server = _server === "default" ? "kiwi" : _server
+
+        // Re-fetch so we get this specific provider's watch-id for the episode.
+        const res = await fetch(`${this.api}/episodes/${anilistId}`)
+        if (!res.ok) {
+            throw new Error(`Failed to fetch episode list (${res.status})`)
+        }
+        const data = (await res.json()) as MiruroEpisodesResponse
+
+        const providerEpisodes = data.providers?.[server]?.episodes?.[audio]
+        if (!providerEpisodes || providerEpisodes.length === 0) {
+            throw new Error(`"${server}" has no ${audio} episodes for this anime. Try another server.`)
+        }
+
+        const match = providerEpisodes.find((e) => e.number === Number(numberStr))
+        if (!match) {
+            throw new Error(`Episode ${numberStr} not found on "${server}".`)
+        }
+
+        const sourceRes = await fetch(`${this.api}/${match.id}`)
+        if (!sourceRes.ok) {
+            throw new Error(`Failed to fetch stream sources (${sourceRes.status})`)
+        }
+        const sourceData = (await sourceRes.json()) as MiruroSourceResponse
+
+        if (!sourceData.streams || sourceData.streams.length === 0) {
+            throw new Error("No video sources returned for this episode.")
+        }
+
+        const subtitles: VideoSubtitle[] = (sourceData.subtitles ?? []).map((sub, i) => ({
+            id: String(i),
+            url: sub.file,
+            language: sub.label,
+            isDefault: i === 0,
+        }))
+
+        const videoSources: VideoSource[] = sourceData.streams.map((s) => ({
+            url: s.url,
+            type: s.type === "hls" ? "m3u8" : "mp4",
+            quality: s.quality,
+            subtitles,
+        }))
+
+        return {
+            server: server,
+            headers: {},
+            videoSources,
+        }
+    }
+}
