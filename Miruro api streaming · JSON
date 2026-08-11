@@ -1,0 +1,24 @@
+{
+    "id": "miruro-api-streaming",
+    "name": "Miruro API (self-hosted)",
+    "description": "Online streaming provider backed by a self-hosted walterwhite-69/Miruro-API instance",
+    "manifestURI": "",
+    "version": "1.0.0",
+    "author": "you",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "multi",
+    "userConfig": {
+        "requiresConfig": true,
+        "version": 1,
+        "fields": [
+            {
+                "name": "apiUrl",
+                "label": "Miruro-API Base URL",
+                "type": "text",
+                "default": "http://localhost:8000"
+            }
+        ]
+    },
+    "payload": "PASTE THE CONTENTS OF miruro-provider.ts HERE"
+}
