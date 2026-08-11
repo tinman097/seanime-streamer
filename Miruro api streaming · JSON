@@ -2,7 +2,7 @@
     "id": "miruro-api-streaming",
     "name": "Miruro API (self-hosted)",
     "description": "Online streaming provider backed by a self-hosted walterwhite-69/Miruro-API instance",
-    "manifestURI": "",
+    "manifestURI": "https://raw.githubusercontent.com/tinman097/seanime-streamer/main/Miruro%20api%20streaming%20%C2%B7%20JSON",
     "version": "1.0.0",
     "author": "you",
     "type": "onlinestream-provider",
